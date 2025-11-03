@@ -3,4 +3,7 @@
  */
 module.exports = function (app, router) {
     app.use('/api', require('./home.js')(router));
+    // Mount the users routes at /api/users
+    app.use('/api/users', require('./users.js')(router));
+    app.use('/api/tasks', require('./tasks.js')(router));
 };
