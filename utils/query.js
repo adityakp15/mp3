@@ -11,12 +11,40 @@ module.exports.parseQueryParams = function parseQueryParams(req, defaults) {
     };
 
     try {
-        if (req.query.where) out.filter = JSON.parse(req.query.where);
-        if (req.query.select) out.projection = JSON.parse(req.query.select);
-        if (req.query.filter && !out.projection) out.projection = JSON.parse(req.query.filter);
-        if (req.query.sort) out.sort = JSON.parse(req.query.sort);
+        if (req.query.where) {
+            try {
+                out.filter = JSON.parse(req.query.where);
+            } catch (e) {
+                out.error = `Invalid JSON in where parameter: ${e.message}. Received: ${req.query.where}`;
+                return out;
+            }
+        }
+        if (req.query.select) {
+            try {
+                out.projection = JSON.parse(req.query.select);
+            } catch (e) {
+                out.error = `Invalid JSON in select parameter: ${e.message}`;
+                return out;
+            }
+        }
+        if (req.query.filter && !out.projection) {
+            try {
+                out.projection = JSON.parse(req.query.filter);
+            } catch (e) {
+                out.error = `Invalid JSON in filter parameter: ${e.message}`;
+                return out;
+            }
+        }
+        if (req.query.sort) {
+            try {
+                out.sort = JSON.parse(req.query.sort);
+            } catch (e) {
+                out.error = `Invalid JSON in sort parameter: ${e.message}`;
+                return out;
+            }
+        }
     } catch (e) {
-        out.error = 'Invalid JSON in query parameters';
+        out.error = `Invalid JSON in query parameters: ${e.message}`;
         return out;
     }
 

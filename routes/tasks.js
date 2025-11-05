@@ -12,6 +12,8 @@ module.exports = function (router) {
 
     tasksRoute.get(async function (req,res){
         const q = parseQueryParams(req, { limit: 100, maxLimit: 1000 });
+        console.log('Parsed query params: ', q);
+        console.log('Filter being used: ', JSON.stringify(q.filter));
         if (q.error) return res.status(400).json({ message: q.error, data: null });
 
         try {
@@ -27,6 +29,7 @@ module.exports = function (router) {
 
             const tasks = await query.exec();
             console.log('Fetched tasks from DB : ', tasks.length);
+            console.log('Query filter: ', JSON.stringify(q.filter));
             return res.json({"message":"OK", data: tasks });
         } catch (err) {
             console.error('GET /api/tasks error:', err);
@@ -64,13 +67,22 @@ module.exports = function (router) {
 
             const completed = (completedRaw === true || completedRaw === 'true' || completedRaw === 'True');
             const assignedUser = assignedUserRaw ? String(assignedUserRaw) : '';
-            const assignedUserName = String(assignedUserNameRaw);
+            let assignedUserName = 'unassigned';
 
             if (assignedUser) {
                 const userDoc = await User.findById(assignedUser);
                 if (!userDoc) {
                     return res.status(400).json({ message: 'Assigned user does not exist', data: null });
                 }
+                assignedUserName = userDoc.name || 'assigned';
+            } else if (assignedUserNameRaw) {
+                assignedUserName = String(assignedUserNameRaw);
+            }
+
+            const duplicateFilter = { name: name, deadline: deadline, assignedUser: assignedUser };
+            const existingTask = await Task.findOne(duplicateFilter);
+            if (existingTask) {
+                return res.status(409).json({ message: 'Task with this name, deadline, and assigned user already exists', data: null });
             }
 
             const task = await Task.create({
@@ -147,8 +159,40 @@ module.exports = function (router) {
                 return res.status(404).json({ message: 'Task not found', data: null });
             }
 
+            const nameChanged = newTask.name && newTask.name !== taskDoc.name;
+            const deadlineChanged = newTask.deadline && new Date(newTask.deadline).getTime() !== new Date(taskDoc.deadline).getTime();
+            const assignedUserChanged = newTask.assignedUser !== undefined && String(newTask.assignedUser) !== String(taskDoc.assignedUser);
+            
+            if (nameChanged || deadlineChanged || assignedUserChanged) {
+                const duplicateFilter = {
+                    _id: { $ne: id },
+                    name: newTask.name !== undefined ? newTask.name : taskDoc.name,
+                    deadline: newTask.deadline !== undefined ? new Date(newTask.deadline) : taskDoc.deadline,
+                    assignedUser: newTask.assignedUser !== undefined ? String(newTask.assignedUser) : String(taskDoc.assignedUser || '')
+                };
+                
+                const duplicateCheck = session 
+                    ? await Task.findOne(duplicateFilter).session(session)
+                    : await Task.findOne(duplicateFilter);
+                if (duplicateCheck) {
+                    if (useTransaction && session) await session.abortTransaction();
+                    if (session) session.endSession();
+                    return res.status(409).json({ message: 'Task with this name, deadline, and assigned user already exists', data: null });
+                }
+            }
+
             const prevAssigned = taskDoc.assignedUser ? String(taskDoc.assignedUser) : null;
             const prevCompleted = !!taskDoc.completed;
+
+            if (newTask.assignedUser) {
+                const userDoc = session ? await User.findById(newTask.assignedUser).session(session) : await User.findById(newTask.assignedUser);
+                if (!userDoc) {
+                    if (useTransaction && session) await session.abortTransaction();
+                    if (session) session.endSession();
+                    return res.status(400).json({ message: 'Assigned user does not exist', data: null });
+                }
+                newTask.assignedUserName = userDoc.name || 'assigned';
+            }
 
             const opts = { new: true, runValidators: true, context: 'query' };
             const updatedTask = session ? await Task.findByIdAndUpdate(id, { $set: newTask }, opts).session(session) : await Task.findByIdAndUpdate(id, { $set: newTask }, opts);
@@ -167,8 +211,10 @@ module.exports = function (router) {
                     if (session) session.endSession();
                     return res.status(400).json({ message: 'Assigned user does not exist', data: null });
                 }
-                if (session) await User.updateOne({ _id: newAssigned }, { $addToSet: { pendingTasks: id } }).session(session);
-                else await User.updateOne({ _id: newAssigned }, { $addToSet: { pendingTasks: id } });
+                if (!updatedTask.completed) {
+                    if (session) await User.updateOne({ _id: newAssigned }, { $addToSet: { pendingTasks: id } }).session(session);
+                    else await User.updateOne({ _id: newAssigned }, { $addToSet: { pendingTasks: id } });
+                }
             }
 
             if (updatedTask.completed && !prevCompleted && newAssigned) {

@@ -107,6 +107,11 @@ module.exports = function (router) {
 
             const prevPending = Array.isArray(user.pendingTasks) ? user.pendingTasks.map(String) : [];
 
+            if (Object.prototype.hasOwnProperty.call(newUser, 'pendingTasks') && Array.isArray(newUser.pendingTasks)) {
+                const uniquePendingTasks = [...new Set(newUser.pendingTasks.map(String))];
+                newUser.pendingTasks = uniquePendingTasks;
+            }
+
             const opts = { new: true, runValidators: true, context: 'query' };
             const updated = session ? await User.findByIdAndUpdate(id, { $set: newUser }, opts).session(session) : await User.findByIdAndUpdate(id, { $set: newUser }, opts);
 
